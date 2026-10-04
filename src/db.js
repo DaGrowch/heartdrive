@@ -73,4 +73,16 @@ CREATE INDEX IF NOT EXISTS idx_messages_link ON messages(link_id, id);
 CREATE INDEX IF NOT EXISTS idx_games_link ON games(link_id);
 `);
 
+// Migrations légères (ajout de colonnes)
+function addColumn(table, col, def) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn('users', 'avatar', 'TEXT');
+addColumn('users', 'bio', 'TEXT');
+addColumn('links', 'label_a', 'TEXT');   // nom donné au lien par user_a
+addColumn('links', 'label_b', 'TEXT');   // nom donné au lien par user_b
+addColumn('links', 'read_a', 'INTEGER NOT NULL DEFAULT 0'); // dernier message lu par user_a
+addColumn('links', 'read_b', 'INTEGER NOT NULL DEFAULT 0');
+
 module.exports = { db, DATA_DIR, UPLOAD_DIR };
