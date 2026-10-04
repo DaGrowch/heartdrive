@@ -28,9 +28,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 const hash = (pin, salt) => crypto.scryptSync(pin, salt, 32).toString('hex');
 const COLORS = ['#00e5ff', '#ff2fd6', '#39ff14', '#ffb400', '#7b5cff', '#ff5a36', '#2fd4ff', '#ff4f8b'];
 
+const pub = u => u && ({ id: u.id, pseudo: u.pseudo, color: u.color, bio: u.bio || '', avatar: u.avatar ? `/avatar/${u.avatar}` : null });
+const getUser = id => pub(db.prepare('SELECT * FROM users WHERE id = ?').get(id));
+
 function userFromToken(token) {
   if (!token) return null;
-  return db.prepare('SELECT u.id, u.pseudo, u.color FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(token) || null;
+  return pub(db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(token));
 }
 function auth(req, res, next) {
   const u = userFromToken(req.cookies[COOKIE]);
@@ -55,7 +58,7 @@ app.post('/api/register', (req, res) => {
   const color = COLORS[db.prepare('SELECT COUNT(*) n FROM users').get().n % COLORS.length];
   const info = db.prepare('INSERT INTO users (pseudo, pass_hash, salt, color, created_at) VALUES (?,?,?,?,?)').run(pseudo, hash(pin, salt), salt, color, now());
   startSession(res, info.lastInsertRowid);
-  res.json({ id: info.lastInsertRowid, pseudo, color });
+  res.json(getUser(info.lastInsertRowid));
 });
 
 app.post('/api/login', (req, res) => {
@@ -65,7 +68,7 @@ app.post('/api/login', (req, res) => {
   if (!u || !crypto.timingSafeEqual(Buffer.from(hash(pin, u.salt), 'hex'), Buffer.from(u.pass_hash, 'hex')))
     return res.status(401).json({ error: 'Pseudo ou code secret incorrect' });
   startSession(res, u.id);
-  res.json({ id: u.id, pseudo: u.pseudo, color: u.color });
+  res.json(pub(u));
 });
 
 app.post('/api/logout', (req, res) => {
@@ -75,6 +78,37 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/me', auth, (req, res) => res.json(req.user));
+
+// ---------- Profil ----------
+function notifyLinked(uid) {
+  db.prepare("SELECT * FROM links WHERE (user_a = ? OR user_b = ?) AND status IN ('pending','active')").all(uid, uid)
+    .forEach(l => emitTo(otherOf(l, uid), 'links', { linkId: l.id }));
+}
+
+app.patch('/api/me', auth, (req, res) => {
+  const uid = req.user.id;
+  const cur = db.prepare('SELECT * FROM users WHERE id = ?').get(uid);
+  const pseudo = req.body.pseudo != null ? String(req.body.pseudo).trim() : cur.pseudo;
+  const color = /^#[0-9a-f]{6}$/i.test(req.body.color || '') ? req.body.color : cur.color;
+  const bio = req.body.bio != null ? String(req.body.bio).trim().slice(0, 160) : cur.bio;
+  if (!validPseudo(pseudo)) return res.status(400).json({ error: 'Pseudo invalide (2 à 20 caractères, lettres/chiffres/_.-)' });
+  const taken = db.prepare('SELECT id FROM users WHERE pseudo = ? AND id != ?').get(pseudo, uid);
+  if (taken) return res.status(409).json({ error: 'Ce pseudo est déjà pris' });
+  db.prepare('UPDATE users SET pseudo = ?, color = ?, bio = ? WHERE id = ?').run(pseudo, color, bio, uid);
+  notifyLinked(uid);
+  res.json(getUser(uid));
+});
+
+app.post('/api/me/pin', auth, (req, res) => {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const current = String(req.body.current || ''), next = String(req.body.next || '');
+  if (!crypto.timingSafeEqual(Buffer.from(hash(current, u.salt), 'hex'), Buffer.from(u.pass_hash, 'hex')))
+    return res.status(401).json({ error: 'Code secret actuel incorrect' });
+  if (next.length < 4) return res.status(400).json({ error: 'Le nouveau code doit faire au moins 4 caractères' });
+  const salt = crypto.randomBytes(16).toString('hex');
+  db.prepare('UPDATE users SET pass_hash = ?, salt = ? WHERE id = ?').run(hash(next, salt), salt, u.id);
+  res.json({ ok: true });
+});
 app.get('/api/themes', (req, res) => res.json(THEMES));
 
 // ---------- Présence & temps réel ----------
@@ -118,17 +152,21 @@ function getLink(id, uid) {
   if (!l || (l.user_a !== uid && l.user_b !== uid)) return null;
   return l;
 }
+const side = (l, uid) => (l.user_a === uid ? 'a' : 'b');
 function linkView(l, uid) {
   const otherId = otherOf(l, uid);
-  const other = db.prepare('SELECT id, pseudo, color FROM users WHERE id = ?').get(otherId);
+  const other = getUser(otherId);
+  const me = side(l, uid);
+  const unread = db.prepare('SELECT COUNT(*) n FROM messages WHERE link_id = ? AND sender_id != ? AND id > ?').get(l.id, uid, l['read_' + me]).n;
   const activeGame = db.prepare("SELECT id, size FROM games WHERE link_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(l.id);
   const gamesCount = db.prepare("SELECT COUNT(*) n FROM games WHERE link_id = ? AND status = 'done'").get(l.id).n;
   const lastMsg = db.prepare('SELECT kind, body, sender_id, created_at FROM messages WHERE link_id = ? ORDER BY id DESC LIMIT 1').get(l.id);
   return {
     id: l.id, status: l.status, created_at: l.created_at, activated_at: l.activated_at,
     incoming: l.status === 'pending' && l.requested_by !== uid,
+    label: l['label_' + me] || '',
     other: { ...other, online: online.has(otherId) },
-    activeGame: activeGame || null, gamesCount, lastMsg: lastMsg || null,
+    activeGame: activeGame || null, gamesCount, lastMsg: lastMsg || null, unread,
   };
 }
 
@@ -160,6 +198,23 @@ app.post('/api/links', auth, (req, res) => {
   const info = db.prepare('INSERT INTO links (user_a, user_b, requested_by, status, created_at) VALUES (?,?,?,?,?)').run(uid, target.id, uid, 'pending', now());
   notifyLink(info.lastInsertRowid);
   res.json(linkView(getLink(info.lastInsertRowid, uid), uid));
+});
+
+app.patch('/api/links/:id', auth, (req, res) => {
+  const l = getLink(req.params.id, req.user.id);
+  if (!l) return res.status(404).json({ error: 'Lien introuvable' });
+  const label = String(req.body.label || '').trim().slice(0, 40);
+  db.prepare(`UPDATE links SET label_${side(l, req.user.id)} = ? WHERE id = ?`).run(label || null, l.id);
+  res.json(linkView(getLink(l.id, req.user.id), req.user.id));
+});
+
+app.post('/api/links/:id/read', auth, (req, res) => {
+  const l = getLink(req.params.id, req.user.id);
+  if (!l) return res.status(404).json({ error: 'Lien introuvable' });
+  const last = db.prepare('SELECT MAX(id) m FROM messages WHERE link_id = ?').get(l.id).m || 0;
+  const col = 'read_' + side(l, req.user.id);
+  db.prepare(`UPDATE links SET ${col} = MAX(${col}, ?) WHERE id = ?`).run(last, l.id);
+  res.json({ ok: true });
 });
 
 function notifyLink(linkId) {
@@ -228,7 +283,7 @@ function pickQuestions(linkId, size, themes) {
 
 function gamePlayers(game) {
   const l = db.prepare('SELECT * FROM links WHERE id = ?').get(game.link_id);
-  return [l.user_a, l.user_b].map(id => db.prepare('SELECT id, pseudo, color FROM users WHERE id = ?').get(id));
+  return [l.user_a, l.user_b].map(getUser);
 }
 function getGame(id, uid) {
   const g = db.prepare('SELECT * FROM games WHERE id = ?').get(Number(id));
@@ -376,6 +431,29 @@ const upload = multer({
   fileFilter: (req, file, cb) => cb(null, /^(image|audio)\//.test(file.mimetype)),
 });
 
+// Photo de profil
+app.post('/api/me/avatar', auth, upload.single('file'), (req, res) => {
+  if (!req.file || !req.file.mimetype.startsWith('image/')) { if (req.file) fs.rm(req.file.path, { force: true }, () => {}); return res.status(400).json({ error: 'Image invalide' }); }
+  const old = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.user.id).avatar;
+  if (old) fs.rm(path.join(UPLOAD_DIR, old), { force: true }, () => {});
+  db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(req.file.filename, req.user.id);
+  notifyLinked(req.user.id);
+  res.json(getUser(req.user.id));
+});
+app.delete('/api/me/avatar', auth, (req, res) => {
+  const old = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.user.id).avatar;
+  if (old) fs.rm(path.join(UPLOAD_DIR, old), { force: true }, () => {});
+  db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.user.id);
+  notifyLinked(req.user.id);
+  res.json(getUser(req.user.id));
+});
+app.get('/avatar/:file', auth, (req, res) => {
+  const u = db.prepare('SELECT id FROM users WHERE avatar = ?').get(req.params.file);
+  if (!u) return res.sendStatus(404);
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.sendFile(path.join(UPLOAD_DIR, req.params.file));
+});
+
 const msgView = m => ({ id: m.id, linkId: m.link_id, sender: m.sender_id, kind: m.kind, body: m.body, url: m.file_name ? `/media/${m.file_name}` : null, duration: m.duration, created_at: m.created_at });
 
 app.get('/api/links/:id/messages', auth, (req, res) => {
@@ -428,6 +506,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Erreur serveur' });
 });
 
-app.get(/^\/(?!api|media|socket\.io).*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get(/^\/(?!api|media|avatar|socket\.io).*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 server.listen(PORT, () => console.log(`🏁 HEARTDRIVE en piste sur http://localhost:${PORT}`));
