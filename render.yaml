@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: heartdrive
+    runtime: node
+    plan: free               # offre gratuite : données effacées à chaque mise en veille (passer en "starter" + disque pour les conserver)
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/themes
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
