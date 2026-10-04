@@ -5,14 +5,15 @@ Design inspiré de **Hearthstone** (cartes à cadre doré, bois, parchemin, gemm
 
 ## Fonctionnalités
 
-- **Comptes** : pseudo + code secret.
-- **Lien entre deux joueurs** : sur l’accueil (le « Garage »), tu entres le pseudo de l’autre. Elle/il accepte l’invitation, et le lien devient actif. Si vous vous invitez tous les deux, il s’active directement.
+- **Comptes** : pseudo + code secret, avec un **profil modifiable** (pseudo, bio, couleur, photo prise depuis la galerie ou l’appareil photo).
+- **Lien entre deux joueurs** : dans la section « Links » de l’accueil, tu entres le pseudo de l’autre. Elle/il accepte l’invitation, et le lien devient actif. Si vous vous invitez tous les deux, il s’active directement. Chacun peut **renommer** ses liens (nom visible par lui seul).
 - **Parties de 5 / 10 / 20 questions** (Sprint / Circuit / Underground), avec choix des thèmes parmi 24 (musique, films, séries, livres, BD, mangas, jeux vidéo, voitures, motos, voyages, sports, nourriture, restaurants, anecdotes, animaux, balades, randonnée, urbex, ski, skate, fleurs, montagne, mer, tatouages). 188 questions, à réponse libre ou oui/non. Le jeu évite de reposer des questions déjà jouées par le même duo.
 - **Tour par tour synchronisé** : tu ne vois la question suivante qu’une fois que les deux ont répondu. La réponse de l’autre reste cachée tant que tu n’as pas répondu toi-même. Ensuite, les deux cartes se retournent côte à côte.
 - **Image automatique** pour chaque réponse : recherche sur Openverse (images libres, sans clé API), puis Wikimedia Commons en secours. Si rien n’est trouvé, la carte prend l’illustration du thème.
 - **Rapport de partie** : score de synergie avec un rang à la Hearthstone (Commune → Légendaire), synergie par thème, faits marquants, sujets d’accord et de désaccord, temps de réponse moyen, et toutes les manches avec leurs images. Il s’imprime ou s’exporte en PDF.
 - **Historique** de toutes tes parties. Il est conservé même si un lien est rompu.
-- **Messagerie** temps réel : texte, **message vocal de 10 s max**, **envoi de photo** (redimensionnée côté navigateur), indicateur « en train d’écrire » et présence en ligne. L’historique est gardé tant que le lien est actif. **Rompre le lien** efface définitivement messages, vocaux et photos.
+- **Accueil** en trois sections : Links (défier un pilote, invitations, liens), Messagerie, Historique.
+- **Messagerie** temps réel, aussi accessible **pendant une partie** (panneau latéral ou bouton 💬 sur mobile) : texte, **message vocal de 10 s max**, **photo depuis la galerie ou prise directement avec l’appareil**, messages non lus, indicateur « en train d’écrire » et présence en ligne. L’historique est gardé tant que le lien est actif. **Rompre le lien** efface définitivement messages, vocaux et photos.
 
 ## Lancer en local
 
